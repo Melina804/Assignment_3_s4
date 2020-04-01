@@ -1,0 +1,448 @@
+---
+title: "Assignment 3 - Causal inference"
+author: "RF"
+date: "2/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+
+# Loading packages 
+library(tidyverse)
+library(brms)
+library(ggplot2)
+library(rethinking)
+
+# Importing data
+data3 <- read_csv("Ass3.csv")
+
+## Preparing the data 
+
+# defining Diagnosis to be a character and adding that 0 is controls and 1 is patients with schizophrenia 
+data3$Diagnosis <- plyr::revalue(as.character(data3$Diagnosis), 
+                             c("0"="Controls", "1"="Schizophrenia"))
+
+# Using mutate to change ID to be a factor and Diagnosis to be a factor
+data3 <- data3 %>%
+  mutate(
+    ID = as.factor(ID),
+    Diagnosis = as.factor(Diagnosis)
+  )
+```
+
+## Assignment 3 - Exploring causal inference issues
+
+In this assignment we explore some issues related to multiple regressions (regressions with more than one predictor), and inferred (causal) relations between variables. N.B. the data is simulated (to make sure I know the actual mechanism generating it), but it's based on a real study. So bear with a longish introduction to get into the details of what we are doing and why it is important.
+
+### Altercentric intrusion in schizophrenia
+
+People with schizophrenia often report altered control and distinction of self-other representations: intrusive thoughts, hearing of voices, delusions of mind reading, paranoia, etc (a substantial portion of the psychotic symptoms experienced in schizophrenia). These have been variously attributed to hypermentalizing (over attribution of mental states to others), social impairment (over preoccupation with own thought processes), hyper socialization (inability to inhibit information from others), etc.
+
+The current study investigates 1) whether schizophrenia is indeed related to altered control and distinction of self-other representations, in particular altercentric intrusions (inability to inhibit social information), and 2) whether these are related to the relevant psychotic symptoms. N.B. the actual study also investigates egocentric intrusion, do check the papers below if interested.
+
+The task is a slightly modified version of this: https://www.ncbi.nlm.nih.gov/pubmed/20731512 You look at a picture with some dots visible to you, as well as with a different person with a different set of dots visible to them. The number of dots you see and that the other sees can be the same (congruent condition) or not (incongruent condition). You are tasked to indicate whether a given number (e.g. 3) matches the number of dots you see (and the dots visible to the other person are irrelevant to the task).
+
+
+The tasks investigates altercentric intrusion: will your reaction time change according to whether the other person is seeing the same amount of dots as you, or not? The idea is that if you correctly inhibit social information, your reaction time should not change, as the information about the other person is not relevant. On the contrary, if you nevertheless use task irrelevant social information, you'll be slower at indicating whether 3 is the right number of dots when the other person sees a different amount of dots than you (conflicting information).
+The bigger the difference between RTs in the congruent and incongruent condition the bigger the altercentric intrusion effect.
+
+For each participant you have 6 variables: 1) ID, 2) AltercentricIntrusion (continuous score), 3) Diagnosis (schizophrenia vs. control), 4) VoiceHearing (severity of voice hearing symptoms, continuous score of the severity of the symptom as measured by a clinician), 5) MindReading (severity of delusions of mind reading, continuous score of the severity of the symptom as measured by a clinician); 6) Apathy (severity of lack of motivation in taking care of oneself, from washing to showing up at work, continuous score of the severity of the symptom as measured by a clinician).
+
+The research questions you have to answer are the following:
+
+## First part
+
+Q1.1) Does schizophrenia involved altercentric intrusion? Define model and priors. Test the implications of your priors (prior predictive checks) and if needed adjust them. Run the model. Test the quality of the fitted model (posterior predictive checks). Assess the evidence in favor of an increased altercentric intrusion in schizophrenia. Report the model and the results, including plots.
+```{r}
+# Define the formula 
+AltercentricDiagnosis_f0 <- bf(AltercentricIntrusion ~ 1 + Diagnosis)
+
+AltercentricDiagnosis_f <- bf(AltercentricIntrusion ~ 0 + Diagnosis)
+
+# Define priors
+get_prior(AltercentricDiagnosis_f, data = data3, family = gaussian)
+get_prior(AltercentricDiagnosis_f0, data = data3, family = gaussian)
+
+PriorDiagnosis <- c(
+  prior(normal(4, 1), class = b), # Altercentric intrusion, based on mean
+  prior(normal(1, 2), class = sigma)) # Average error based on mean SD of altercentric intrusion
+
+
+# Testing the prior
+
+AltercentricDiagnosis_PriorCheck_m <- brm(
+  formula = AltercentricDiagnosis_f,
+  data = data3,
+  family = gaussian,
+  prior = PriorDiagnosis,
+  sample_prior = "only")
+
+# Prior predictive check
+
+pp_check(AltercentricDiagnosis_PriorCheck_m, nsamples = 100)
+
+# Fitting the model
+AltercentricDiagnosis_m <- brm(
+  formula = AltercentricDiagnosis_f,
+  data = data3,
+  family = gaussian,
+  prior = PriorDiagnosis,
+  sample_prior = T
+)
+
+# Run the model
+summary(AltercentricDiagnosis_m)
+
+# Sanity check of the model / Posterior predictive check of the model
+pp_check(AltercentricDiagnosis_m, nsamples = 100)
+
+# PLOTS 
+
+data3 %>%
+  ggplot(aes(x = Diagnosis, y = AltercentricIntrusion)) +
+  geom_abline(intercept = fixef(AltercentricDiagnosis_m)[1], 
+              slope     = fixef(AltercentricDiagnosis_m)[2]) +
+  geom_point(shape = 1, size = 2, color = "royalblue") +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_jitter()
+
+## Check the model for warnings
+AltercentricDiagnosis_m
+
+# Hypothesis testing + updating check
+plot(hypothesis(AltercentricDiagnosis_m,
+           "DiagnosisSchizophrenia > DiagnosisControls"))
+
+hypothesis(AltercentricDiagnosis_m,
+           "DiagnosisSchizophrenia > DiagnosisControls")
+
+conditional_effects(AltercentricDiagnosis_m)
+
+plot(conditional_effects(AltercentricDiagnosis_m), points=T)
+
+```
+
+
+Q1.2) Is altercentric intrusion related to specific symptoms *in the patients*? Identify which of the symptoms could be relevant. Should you include more than one symptom? Build models, priors, predictive checks. Assess the evidence and report models and results, including plots. Discuss whether the results make sense.
+
+```{r}
+
+data3 <- data3 %>%
+  mutate(
+    AltercentricIntrusion = scale(AltercentricIntrusion),
+    VoiceHearing = scale(VoiceHearing),
+    MindReading = scale(MindReading),
+    Apathy = scale(Apathy)
+  )
+# Making a subset of the data with only the patients 
+patients <- filter(data3, Diagnosis == "Schizophrenia")
+
+# Define different formulas 
+AltercentricIntrusionVH_f <- bf(AltercentricIntrusion ~ 1 + VoiceHearing)
+AltercentricIntrusionMR_f <- bf(AltercentricIntrusion ~ 1 + MindReading)
+AltercentricIntrusionA_f <- bf(AltercentricIntrusion ~ 1 + Apathy)
+
+# Define priors
+get_prior(AltercentricIntrusionVH_f, data = patients, family = gaussian)
+get_prior(AltercentricIntrusionMR_f, data = patients, family = gaussian)
+get_prior(AltercentricIntrusionA_f, data = patients, family = gaussian)
+
+mean(patients$VoiceHearing)
+sd(patients$VoiceHearing)
+priorVH <- c(
+  prior(normal(0, 1), class = Intercept),
+  prior(normal(0, .3), class = b), # Voice Hearing add the mean of VH
+  prior(normal(1, 2), class = sigma)) # Average error from the mean of VH
+
+mean(patients$MindReading)
+sd(patients$MindReading)
+priorMR <- c(
+  prior(normal(4, 1),class = Intercept),
+  prior(normal(2, 1), class = b), # Mind Reading, the mean of MR
+  prior(normal(1, 1), class = sigma)) # the average error from the mean of MR
+
+mean(patients$Apathy)
+sd(patients$Apathy)
+priorA <- c(
+  prior(normal(4, 1), class = Intercept),
+  prior(normal(2, 0.5), class = b), # Apathy, the mean of A
+  prior(normal(1, 1), class = sigma)) # average error from the mean of A
+
+# Testing the prior 
+
+AltercentricVH_PriorCheck_m <- brm(
+  formula = AltercentricIntrusionVH_f,
+  data = patients,
+  family = gaussian,
+  prior = priorVH,
+  sample_prior = "only")
+
+AltercentricMR_PriorCheck_m <- brm(
+  formula = AltercentricIntrusionMR_f,
+  data = patients,
+  family = gaussian,
+  prior = priorMR,
+  sample_prior = "only")
+
+AltercentricA_PriorCheck_m <- brm(
+  formula = AltercentricIntrusionA_f,
+  data = patients,
+  family = gaussian,
+  prior = priorA,
+  sample_prior = "only")
+
+
+# Prior predictive check
+pp_check(AltercentricVH_PriorCheck_m, nsamples = 100)
+pp_check(AltercentricMR_PriorCheck_m, nsamples = 100)
+pp_check(AltercentricA_PriorCheck_m, nsamples = 100)
+
+# Fitting the model
+
+AltercentricVH_m <- brm(
+  formula = AltercentricIntrusionVH_f,
+  data = patients,
+  family = gaussian,
+  prior = priorVH,
+  sample_prior = T)
+
+AltercentricMR_m <- brm(
+  formula = AltercentricIntrusionMR_f,
+  data = patients,
+  family = gaussian,
+  prior = priorMR,
+  sample_prior = T)
+
+AltercentricA_m <- brm(
+  formula = AltercentricIntrusionA_f,
+  data = patients,
+  family = gaussian,
+  prior = priorA,
+  sample_prior = T)
+
+# Run the model
+summary(AltercentricVH_m)
+summary(AltercentricMR_m)
+summary(AltercentricA_m)
+
+# Sanity check of the model / Posterior predictive check 
+pp_check(AltercentricVH_m)
+pp_check(AltercentricMR_m)
+pp_check(AltercentricA_m)
+
+# plot, plot plots
+plot(AltercentricVH_m, nsamples = 100)
+plot(AltercentricMR_m, nsamples = 100)
+plot(AltercentricA_m, nsamples = 100)
+
+patients %>%
+  ggplot(aes(x = VoiceHearing, y = AltercentricIntrusion)) +
+  geom_abline(intercept = fixef(m1)[1], 
+              slope     = fixef(m1)[2]) +
+  geom_point(shape = 1, size = 2, color = "royalblue") +
+  theme_bw() +
+  theme(panel.grid = element_blank())+
+  geom_jitter()
+
+
+## Check the model for warnings
+AltercentricVH_m
+AltercentricMR_m
+AltercentricA_m
+
+hypothesis(AltercentricVH_m,
+           "Voice Hearing > 0")
+
+hypothesis(AltercentricMR_m,
+           "Mind Reading > 0")
+
+hypothesis(AltercentricA_m,
+           "Apathy > 0")
+
+# Hypothesis testing + updating check
+plot(hypothesis(AltercentricVH_m,
+           "Voice Hearing > 0"))
+
+plot(hypothesis(AltercentricMR_m,
+           "Mind Reading > 0"))
+
+plot(hypothesis(AltercentricA_m,
+           "Apathy > 0"))
+
+
+conditional_effects(AltercentricVH_m)
+conditional_effects(AltercentricMR_m)
+conditional_effects(AltercentricA_m)
+
+
+plot(conditional_effects(AltercentricVH_m), points=T)
+plot(conditional_effects(AltercentricMR_m), points=T)
+plot(conditional_effects(AltercentricA_m), points=T)
+
+
+
+### Multivarient brms
+
+# Defining the formula 
+AltercentricIntrusionVH_MR_f <- bf(AltercentricIntrusion ~ 1 + VoiceHearing + MindReading)
+
+# Getting prior 
+get_prior(AltercentricIntrusionVH_MR_f, data = patients, family = gaussian)
+
+# Setting the prior 
+
+priorVH_MR <- c(
+  prior(normal(4, 1), class = Intercept),
+  prior(normal(2, 1), class = b, coef = VoiceHearing),
+  prior(normal(2, 1), class = b, coef = MindReading),
+  prior(normal(1, 1), class = sigma))
+
+# Prior predictive check 
+AltercentricVH_MR_PriorCheck_m <- brm(
+  formula = AltercentricIntrusionVH_MR_f,
+  data = patients,
+  family = gaussian,
+  prior = priorVH_MR,
+  sample_prior = "only")
+
+# Fitting the model
+AltercentricVH_MR_m <- brm(
+  formula = AltercentricIntrusionVH_MR_f,
+  data = patients,
+  family = gaussian,
+  prior = priorVH_MR,
+  sample_prior = T)
+
+AltercentricVH_MR_m
+
+# Posterior predictive check 
+pp_check(AltercentricVH_m, nsamples = 100)
+
+# Hypothesis testing 
+hypothesis(AltercentricVH_MR_m,
+           "Voice Hearing > 0")
+
+vcov(AltercentricVH_MR_m, correlation = T)
+
+```
+
+
+## Second part
+
+Q2.1) However, we know that the diagnosis is based on symptom assessment: if the overall sum of symptoms is severe enough, the participant gets a diagnosis. In other words, by selecting the patients, and including the symptoms in the model we might have inadvertently introduced an issue in our inference. Do try to draw a causal graph (Directed Acyclical Graph) of the variables and compare it with the types of causal graphs presented in the slides. Discuss which biases you might have introduced.
+
+
+Q2.2.) Redesign your analysis following the graph and report how the results change
+
+```{r}
+# Defining the formula 
+AltercentricD_AI_A <- bf(Diagnosis ~ 1 + AltercentricIntrusion + Apathy)
+
+# Getting prior 
+get_prior(AltercentricD_AI_A, data = data3, family = gaussian)
+
+# Setting the prior 
+
+prior <- c(
+  prior(normal(4, 1), class = b, coef = AltercentricIntrusion),
+  prior(normal(2, 1), class = b, coef = Apathy),
+  prior(normal(1, 1), class = sigma))
+
+# Prior predictive check 
+AltercentricD_AI_A_prior <- brm(
+  formula = AltercentricD_AI_A,
+  data = data3,
+  family = gaussian,
+  prior = prior,
+  sample_prior = "only")
+
+# Fitting the model
+AltercentricD_AI_A_m <- brm(
+  formula = AltercentricD_AI_A,
+  data = data3,
+  family = gaussian,
+  prior = prior,
+  sample_prior = T)
+
+AltercentricD_AI_A_m
+
+# Posterior predictive check 
+pp_check(AltercentricVH_m, nsamples = 100)
+
+# Hypothesis testing 
+hypothesis(AltercentricVH_MR_m,
+           "Voice Hearing > 0")
+
+vcov(AltercentricD_AI_A_m, correlation = T)
+
+# Plot 
+m5_f <- 
+  brm(data = data3, family = gaussian,
+      Diagnosis ~ 1 + AltercentricIntrusion + Apathy,
+      prior = c(prior(normal(4, 1), class = b, coef = AltercentricIntrusion),
+                prior(normal(4, 1), class = b, coef = Apathy),
+                prior(normal(1, 1), class = sigma)),
+      sample_prior = T)
+
+print(m5_f)
+mcmc_plot(m5_f)
+```
+
+## Third part
+
+These issues are very difficult to think through, and not knowing the causal mechanisms generating the data in advance makes our inferences even more unreliable. To explore these issues, I recommend using simulations. In other words, defining a "true" model, generating data from it and assessing what different analyses would lead you to infer (and therefore which biases they might introduce). You can find the code I used to simulate your data below.
+
+Q3.1) Look through the code and identify whether the results you have match the underlying truth. Discuss what you have learned.
+
+Q3.2) OPTIONAL: is this a general pattern? Try varying the parameters (e.g. correlation values) and assess whether the new dataset(s) leads to the same biases in your analysis.
+
+
+
+```{r}
+pacman::p_load(MASS, tidyverse, psych)
+
+seed <- 1981 # Defining a seed so the results are always the same
+n <- 300 # Defining the amount of participants
+
+SymptomCorr <- .2 # Defining the correlation of symptoms (as they tend to co-occur)
+EffectCorrRel <- .2 # Defining the correlation between relevant symptoms and effect (Some symptoms are positively correlated with the effect)
+EffectCorrIrrel <- 0 # Defining the correlation between irrelevant symptoms and effect (none)
+
+# Creating the variance-covariance matrix for the variables we want to generate (3 symptoms, 1 effect)
+Sigma <- matrix(data=c(1,SymptomCorr,SymptomCorr,EffectCorrRel,
+                       SymptomCorr,1,SymptomCorr,EffectCorrRel,
+                       SymptomCorr,SymptomCorr,1,EffectCorrIrrel,
+                       EffectCorrRel,EffectCorrRel,EffectCorrIrrel,1),
+                       nrow=4,ncol=4)
+
+## Generate data from a multivariate (mvr) normal (n) distribution
+d <- mvrnorm(n = n, # number of participant
+        mu = c(1.2, 1.2, 1.2, 4), # mean of each variable
+        Sigma) # variance co-variance matrix
+
+# Giving meaningful names to variables and add ID
+d <- data.frame(
+  VoiceHearing = d[,1], 
+  MindReading =  d[,2],
+  Apathy =  d[,3], 
+  AltercentricIntrusion = d[,4],
+  ID = seq(nrow(d)))
+
+# Assessing whether the participant has schizophrenia (high enough sum of symptoms)
+# Here we choose participants scoring above 75% percentile (the most severe ones)
+d$Diagnosis <- 0
+d$Diagnosis[(d$VoiceHearing + d$MindReading + d$Apathy) > 
+              quantile(d$VoiceHearing + d$MindReading + d$Apathy, .75)] <-1
+
+## Plotting the relation between variables in schizophrenia
+d1 <- d %>% subset(Diagnosis==1) %>% dplyr::select(-Diagnosis, -ID)
+pairs.panels(d1)
+
+## Plotting the relation between variables all participants
+pairs.panels(dplyr::select(d,-Diagnosis, -ID))
+
+write_csv(d, "data/Ass3.csv")
+```
+
